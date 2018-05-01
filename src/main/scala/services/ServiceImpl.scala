@@ -1,28 +1,20 @@
 package services
 
-import api.sensors.Sensors
 import spi.service.Service
-
-import _root_.rx.lang.scala.Observable
-import Sensors.Observation
 
 
 class ServiceImpl extends Service {
-  private[this] var sensor: Observable[Observation] = _
-  private[this] var values: List[Observation] = _
 
-  override def init(obsBus: Observable[Observation]): Unit = {
-    sensor = obsBus
-    values = List()
+  override def init(): Unit = {
+    import org.json4s._
+    implicit val _ = DefaultFormats
+
+    val dataEvaluator = new DataEvaluator()
+    dataEvaluator.jsonStream().subscribe(elem => println("value: " + (elem \ "value").extract[Int]))
   }
 
-  override def restart(): Unit = {
-    sensor.foreach(e => {
-      values :+= e
-      println(e)
-    })
-  }
+  override def restart(): Unit = {}
 
-  override def dispose(): Unit = values = List()
+  override def dispose(): Unit = {}
 }
 
