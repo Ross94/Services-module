@@ -1,0 +1,9 @@
+[
+  {
+    "id": "sensor0_datastream0",
+    "rules": [
+      {"policy": ">=", "threshold": 30, "ruleDegree": 0},
+      {"policy": "<", "threshold": 30, "ruleDegree": 1}
+    ]
+  }
+]
