@@ -7,3 +7,5 @@
 *.iws
 .idea
 out
+project
+target
