@@ -1,9 +1,17 @@
-[
-  {
-    "id": "sensor0_datastream0",
-    "rules": [
-      {"policy": ">=", "threshold": 30, "ruleDegree": 0},
-      {"policy": "<", "threshold": 30, "ruleDegree": 1}
-    ]
-  }
-]
+{
+  "allRules":[
+    {
+        "sensor":"temperature",
+        "rules":[
+          {"sign":"<=","threshold":24.0,"alarm":0},
+          {"sign":">","threshold":25.0,"alarm":1},
+          {"sign":">=","threshold":35.0,"alarm":2}
+        ]},
+    {
+        "sensor":"hearthbeat",
+        "rules":[
+          {"sign":"<=","threshold":100.0,"alarm":0},
+          {"sign":">=","threshold":160.0,"alarm":2}
+    ]}
+  ]
+}

@@ -1,5 +1,7 @@
 package main
 
+import scala.io.Source
+
 import java.net.URI
 import java.util.concurrent.TimeUnit
 
@@ -17,13 +19,29 @@ import scala.concurrent.duration.Duration
 import rx.lang.scala
 import rx.lang.scala.Observable
 
+case class Procedure(sensor: String, rules: List[Rule])
+case class Rule(sign: String, threshold: Double, alarm: Int)
+
 class MonitoringService extends Service {
   implicit val _ = DefaultFormats
 
-  def valueValidator(sensorType: String, value: Any, threshold: Any): Boolean = sensorType match {
-    case "temperature" =>
-      if(value.toString.toDouble > threshold.toString.toDouble) true else false
-    case _ => false
+  private[this] val rules = (parse(Source.fromFile("assets/config/thresholds.json").mkString) \ "allRules").extract[List[Procedure]]
+
+  def valueValidator(sensorType: String, value: Any): Int = {
+
+    def operation(rule: String, value: Double, threshold: Double): Boolean = rule match {
+      case "<" => if(value < threshold) true else false
+      case "<=" => if(value <= threshold) true else false
+      case "==" => if(value == threshold) true else false
+      case ">" => if(value > threshold) true else false
+      case ">=" => if(value >= threshold) true else false
+      case _ => false
+    }
+
+    var ret = -1
+    rules.filter(_.sensor equals sensorType).foreach(procedure =>
+      procedure.rules.sortBy(_.alarm).foreach(rule => if (operation(rule.sign, value.toString.toDouble, rule.threshold)) ret = rule.alarm))
+    ret
   }
 
   private[this] var jSonStream: scala.Observable[String] = _
@@ -36,7 +54,7 @@ class MonitoringService extends Service {
           jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
           jsonElem ~= ("value" -> elem.result.toString.toDouble)
           jsonElem ~= ("timestamp" -> elem.resultTime.toString)
-          jsonElem ~= ("alarm" -> valueValidator(elem.parentDataStream.observedProperty.name, elem.result, 25))
+          jsonElem ~= ("alarm" -> valueValidator(elem.parentDataStream.observedProperty.name, elem.result))
           compact(render(jsonElem))
         })
         jSonStream == null match {
@@ -56,7 +74,7 @@ class MonitoringService extends Service {
 
 }
 
-object Test extends App {
+object MonitoringServiceTest extends App {
 
   val t = new MonitoringService()
   t.init(null)
