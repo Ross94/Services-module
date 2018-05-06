@@ -30,11 +30,11 @@ class MonitoringService extends Service {
   def valueValidator(sensorType: String, value: Any): Int = {
 
     def operation(rule: String, value: Double, threshold: Double): Boolean = rule match {
-      case "<" => if(value < threshold) true else false
-      case "<=" => if(value <= threshold) true else false
-      case "==" => if(value == threshold) true else false
-      case ">" => if(value > threshold) true else false
-      case ">=" => if(value >= threshold) true else false
+      case "<" => value < threshold
+      case "<=" => value <= threshold
+      case "==" => value == threshold
+      case ">" => value > threshold
+      case ">=" => value >= threshold
       case _ => false
     }
 
@@ -105,5 +105,5 @@ object MonitoringServiceTest extends App {
     })
   })
 
-  //if(t.getStream().nonEmpty) t.getStream().get.subscribe(e => println(e)) else println("empty")
+  if(t.getStream().nonEmpty) t.getStream().get.subscribe(e => println(e)) else println("empty")
 }
