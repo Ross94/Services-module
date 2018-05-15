@@ -8,10 +8,11 @@
           {"sign":">=","threshold":35.0,"alarm":2}
         ]},
     {
-        "sensor":"hearthbeat",
+        "sensor":"heartbeat",
         "rules":[
           {"sign":"<=","threshold":100.0,"alarm":0},
-          {"sign":">=","threshold":160.0,"alarm":2}
+          {"sign":">","threshold":100.0,"alarm":1},
+          {"sign":">=","threshold":150.0,"alarm":2}
     ]}
   ]
 }
