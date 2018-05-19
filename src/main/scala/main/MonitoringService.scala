@@ -1,11 +1,13 @@
 package main
 
+import java.io.FileInputStream
+
 import scala.io.Source
 import java.net.URI
 import java.util.concurrent.Executors
 
 import api.config.Preferences
-import api.events.{EventBus, EventLogging}
+import api.events.EventBus
 import api.events.SensorsHubEvents.{DeviceCreated, DeviceDeleted}
 import api.internal.{DeviceController, DriversManager, TaskingSupport}
 import api.sensors.DevicesManager
@@ -20,6 +22,7 @@ import spi.service.{Service, ServiceMetadata}
 import org.json4s._
 import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods._
+import sun.audio.{AudioPlayer, AudioStream}
 
 import scala.collection.concurrent.TrieMap
 
@@ -33,7 +36,7 @@ class MonitoringService extends Service {
 
   Preferences.configure("sh-prefs.conf")
 
-  def valueValidator(sensorType: String, value: Any): Int = {
+  def valueChecker(sensorType: String, value: Any): Int = {
 
     def operation(rule: String, value: Double, threshold: Double): Boolean = rule match {
       case "<" => value < threshold
@@ -47,7 +50,19 @@ class MonitoringService extends Service {
     var ret = -1
     rules.filter(_.sensor equals sensorType).foreach(procedure =>
       procedure.rules.sortBy(_.alarm).foreach(rule => if (operation(rule.sign, value.toString.toDouble, rule.threshold)) ret = rule.alarm))
+    if(ret != 0) alarmTrigger(sensorType, ret)
     ret
+  }
+
+  def alarmTrigger(sensorType: String, alarmValue: Int): Unit = {
+    //ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}").subscribe(e => println(e))
+    DriversManager.availableDrivers.foreach(drv => println("description: " + drv.description + " name: " + drv.name))
+    /*.foreach { drv =>
+      drv.controller match {
+        case ctrl: DeviceController with TaskingSupport =>
+          ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
+      }
+    }*/
   }
 
   private[this] val sensorStreams = TrieMap[Int, Disposable]()
@@ -64,7 +79,7 @@ class MonitoringService extends Service {
           jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
           jsonElem ~= ("value" -> elem.result.toString.toDouble)
           jsonElem ~= ("timestamp" -> elem.resultTime.toString)
-          jsonElem ~= ("alarm" -> valueValidator(elem.parentDataStream.observedProperty.name, elem.result))
+          jsonElem ~= ("alarm" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
           compact(render(jsonElem))
         }).subscribe(elem => jSonStream.onNext(elem)))
       })
@@ -100,30 +115,38 @@ object MonitoringServiceTest extends App {
 
   ObjectExtractor.overrideClassLoader(DriversManager.cl)
 
-  val temperatureDriver = DriversManager.instanceDriver("driver 1")
+  val temperatureDriver = DriversManager.instanceDriver("driver 1")//da cambiare quando verrà rifatto il jar
   temperatureDriver.foreach {
     drv =>
       drv.controller.init()
       drv.controller.start()
       drv.config.configure("temperature.conf")
-      DevicesManager.createDevice("temp", "", Encodings.PDF, new URI(""), drv)
+      DevicesManager.createDevice("temperature", "", Encodings.PDF, new URI(""), drv)
   }
 
-  val heartbeatDriver = DriversManager.instanceDriver("driver 2")
+  val heartbeatDriver = DriversManager.instanceDriver("simulatedHeartbeatDriver")
   heartbeatDriver.foreach {
     drv =>
       drv.controller.init()
       drv.controller.start()
       drv.config.configure("heartbeat.conf")
-      DevicesManager.createDevice("heart", "", Encodings.PDF, new URI(""), drv)
+      DevicesManager.createDevice("heartbeat", "", Encodings.PDF, new URI(""), drv)
   }
 
-  val beepDriver = DriversManager.instanceDriver("driver 3")
-  beepDriver.foreach {
+  val bellDriver = DriversManager.instanceDriver("simulatedBellDriver")
+  bellDriver.foreach {
     drv =>
       drv.controller.init()
       drv.controller.start()
       DevicesManager.createDevice("bell", "", Encodings.PDF, new URI(""), drv)
+  }
+
+  val soundDriver = DriversManager.instanceDriver("simulatedSoundDriver")
+  soundDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      DevicesManager.createDevice("sound", "", Encodings.PDF, new URI(""), drv)
   }
 
   //service.getStream().subscribe(e => println(e))
@@ -135,15 +158,22 @@ object MonitoringServiceTest extends App {
     ws.onConnect(session => service.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
         .subscribe(jsonElem => session.send(jsonElem)))
     ws.onMessage((_, message) => {
-      message match {
-        case _ =>
-          beepDriver.foreach {
-            drv =>
-              drv.controller match {
-                case ctrl: DeviceController with TaskingSupport =>
-                  ctrl.send("ring-bell", """{"duration":1000, "sleep":250}""").subscribe(e => println("maybe: " + e))
-              }
+      def soundAlarm(duration: Int, sleep: Int): Unit = {
+        soundDriver.foreach { drv =>
+          drv.controller match {
+            case ctrl: DeviceController with TaskingSupport =>
+              ctrl.send("play-sound", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}").subscribe(e => println(e))
           }
+        }
+      }
+      implicit val _ = DefaultFormats
+      val jsonResponse = parse(message)
+      (jsonResponse \ "alarm").extract[Int] match {
+        case 1 =>
+          soundAlarm(1,0)
+        case 2 =>
+          soundAlarm(2,1000)
+        case _ =>
           println("unknown response: " + message)
       }
     })
@@ -161,5 +191,8 @@ object MonitoringServiceTest extends App {
 }
 
 object Malevole extends App {
-    java.awt.Toolkit.getDefaultToolkit.beep()
+  for (_ <- 0 until 2) {
+    AudioPlayer.player.start(new AudioStream( new FileInputStream("car.au")))
+    Thread.sleep(1000)
+  }
 }
