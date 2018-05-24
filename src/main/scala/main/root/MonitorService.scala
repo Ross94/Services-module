@@ -1,0 +1,266 @@
+package main.root
+
+import java.util.concurrent.Executors
+
+import api.config.Preferences
+import api.events.EventBus
+import api.events.SensorsHubEvents.{DeviceCreated, DeviceDeleted}
+import api.internal.{DeviceController, TaskingSupport}
+import api.sensors.DevicesManager
+import com.fasterxml.jackson.core.JsonParseException
+import io.javalin.embeddedserver.jetty.websocket.WebSocketHandler
+import io.reactivex.disposables.Disposable
+import io.reactivex.schedulers.Schedulers
+import io.reactivex.subjects.PublishSubject
+import org.json4s.JsonDSL._
+import org.json4s._
+import org.json4s.jackson.JsonMethods._
+import spi.service.{Service, ServiceMetadata}
+
+import scala.collection.concurrent.TrieMap
+import scala.io.Source
+
+private case class Procedure(sensor: String, rules: List[Rule])
+private case class Rule(sign: String, threshold: Double, alarm: Int)
+
+private case class AlarmData(alarmType: String, sender: Int, level: Int)
+
+class MonitorService extends Service {
+  implicit val _ = DefaultFormats
+
+  private[this] var webSocket: MonitorServiceWebSocket = _
+  private[this] var rules: List[Procedure] = _
+
+  Preferences.configure("sh-prefs.conf")
+
+  def valueChecker(sensorType: String, value: Any): Int = {
+
+    def operation(rule: String, value: Double, threshold: Double): Boolean = rule match {
+      case "<" => value < threshold
+      case "<=" => value <= threshold
+      case "==" => value == threshold
+      case ">" => value > threshold
+      case ">=" => value >= threshold
+      case _ => false
+    }
+
+    var ret = -1
+    rules.filter(_.sensor equals sensorType).foreach(procedure =>
+      procedure.rules.sortBy(_.alarm).foreach(rule => if (operation(rule.sign, value.toString.toDouble, rule.threshold)) ret = rule.alarm))
+    if(ret != 0) alarmTrigger(sensorType, ret)
+    ret
+  }
+
+  def alarmTrigger(sensorType: String, alarmValue: Int): Unit = {
+    //ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}").subscribe(e => println(e))
+    //DevicesManager.devices().
+    /*.foreach { drv =>
+      drv.controller match {
+        case ctrl: DeviceController with TaskingSupport =>
+          ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
+      }
+    }*/
+  }
+
+  //private[this] val sensorStreams = TrieMap[Int, Disposable]()
+  private[this] val sensorStreams = TrieMap[Int, List[Disposable]]()
+  private[this] val jSonStream = PublishSubject.create[String]()
+
+  def getStream(): PublishSubject[String] = jSonStream
+
+  override def init(metadata: ServiceMetadata): Unit = {
+
+    rules = (parse(Source.fromFile(metadata.rootDir + "/assets/config/thresholds.json").mkString) \ "allRules").extract[List[Procedure]]
+    webSocket = MonitorServiceWebSocket(this, showLog = false, 7000)
+
+    EventBus.events.subscribe(_ match {
+      case deviceCreated: DeviceCreated =>
+        deviceCreated.ds.dataStreams.foreach(stream => {
+          sensorStreams += deviceCreated.ds.id -> (sensorStreams.getOrElse(deviceCreated.ds.id, List()) :+
+            stream.observable.map[String](elem => {
+              var jsonElem = JObject()
+              jsonElem ~= ("name" -> deviceCreated.ds.name)
+              jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
+              jsonElem ~= ("value" -> elem.result.toString.toDouble)
+              jsonElem ~= ("timestamp" -> elem.resultTime.toString)
+              jsonElem ~= ("level" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
+              compact(render(jsonElem))
+            }).subscribe(elem => jSonStream.onNext(elem)))
+        })
+      case deviceDeleted: DeviceDeleted =>
+        sensorStreams(deviceDeleted.ds.id).foreach(_.dispose())
+      case _ =>
+    })
+    /*
+    EventBus.events.subscribe(_ match {
+      case deviceCreated: DeviceCreated =>
+        deviceCreated.ds.dataStreams.foreach(stream => {
+          sensorStreams.put(deviceCreated.ds.id,
+            stream.observable.map[String](elem => {
+              var jsonElem = JObject()
+              jsonElem ~= ("name" -> deviceCreated.ds.name)
+              jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
+              jsonElem ~= ("value" -> elem.result.toString.toDouble)
+              jsonElem ~= ("timestamp" -> elem.resultTime.toString)
+              jsonElem ~= ("level" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
+              compact(render(jsonElem))
+            }).subscribe(elem => jSonStream.onNext(elem))
+        })
+      case deviceDeleted: DeviceDeleted =>
+        sensorStreams(deviceDeleted.ds.id).dispose()
+      case _ =>
+    })*/
+  }
+
+  override def start(): Unit = webSocket.start()
+
+  override def restart(): Unit = {}
+
+  override def dispose(): Unit = {
+    //sensorStreams.foreach(stream => stream._2.dispose())
+    sensorStreams.foreach(entry => entry._2.foreach(_.dispose()))
+    webSocket.stop()
+  }
+}
+
+private class MonitorServiceWebSocket(
+   private[this] val monitorService: MonitorService,
+   private[this] val showLog: Boolean = true,
+   private[this] val port: Int = 8000) {
+  import io.javalin.Javalin
+
+  showLog match {
+    case true =>
+    case false =>
+      //Remove jetty log
+      System.setProperty("org.eclipse.jetty.util.log.class", "org.eclipse.jetty.util.log.StdErrLog")
+      System.setProperty("org.eclipse.jetty.LEVEL", "OFF")
+
+      import org.apache.log4j.{Level, LogManager}
+      import scala.collection.JavaConverters._
+      LogManager.getCurrentLoggers.asScala foreach {
+        case l: org.apache.log4j.Logger =>
+          if(!l.getName.startsWith("sh.")) l.setLevel(Level.OFF)
+      }
+  }
+
+  private[this] val javalinWs = Javalin.create()
+  javalinWs.port(port)
+  javalinWs.ws("/jsonStream", (ws: WebSocketHandler) => {
+    ws.onConnect(session => monitorService.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
+      .subscribe(jsonElem => session.send(jsonElem)))
+    ws.onMessage((session, message) => {
+      def soundAlarm(duration: Int, sleep: Int): Unit = {
+        DevicesManager.devices().map(dev => dev.driver).find(_.metadata.name equals "simulatedSoundDriver").foreach { drv =>
+          drv.controller match {
+            case ctrl: DeviceController with TaskingSupport =>
+              ctrl.send("play-sound", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
+          }
+        }
+      }
+      implicit val _ = DefaultFormats
+      try {
+        val response = parse(message).extract[AlarmData]
+        soundAlarm(response.level,500)
+      }
+      catch {
+        case _: JsonParseException =>
+          //session.send("{\"error\":\"malformed json\"}")
+      }
+    })
+  })
+
+  def start(): Unit = javalinWs.start()
+
+  def stop(): Unit = javalinWs.stop()
+}
+
+private object MonitorServiceWebSocket {
+  def apply(monitorService: MonitorService, showLog: Boolean = true, port: Int = 8000): MonitorServiceWebSocket =
+    new MonitorServiceWebSocket(monitorService, showLog, port)
+}
+
+object MonitorServiceTest extends App {
+  import java.net.URI
+  import api.internal.DriversManager
+  import api.sensors.Sensors.Encodings
+  import fi.oph.myscalaschema.extraction.ObjectExtractor
+
+  //url: ws://localhost:7000/jsonStream
+  //send: {"sender":1,"alarmType":"temp","level":2}
+
+  val service = new MonitorService()
+  service.init(ServiceMetadata("monitorServiceTest","0","test service",System.getProperty("user.dir")))
+  service.start()
+
+  ObjectExtractor.overrideClassLoader(DriversManager.cl)
+
+  val temperatureDriver = DriversManager.instanceDriver("simulatedTemperatureDriver")//da cambiare quando verrà rifatto il jar
+  temperatureDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      drv.config.configure("temperature.conf")
+      DevicesManager.createDevice("temperature", "", Encodings.PDF, new URI(""), drv)
+  }
+
+  val heartbeatDriver = DriversManager.instanceDriver("simulatedHeartbeatDriver")
+  heartbeatDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      drv.config.configure("heartbeat.conf")
+      DevicesManager.createDevice("heartbeat", "", Encodings.PDF, new URI(""), drv)
+  }
+
+  val bellDriver = DriversManager.instanceDriver("simulatedBellDriver")
+  bellDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      DevicesManager.createDevice("bell", "", Encodings.PDF, new URI(""), drv)
+  }
+
+  val soundDriver = DriversManager.instanceDriver("simulatedSoundDriver")
+  soundDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      DevicesManager.createDevice("sound", "", Encodings.PDF, new URI(""), drv)
+  }
+
+  DevicesManager.devices().foreach(dev =>{
+    print("dev: " + dev.name + "| stream: ")
+    dev.dataStreams.foreach(ds => print(ds.name + " "))
+    println()
+  })
+
+  //service.getStream().subscribe(e => println(e))
+
+  Thread.sleep(10000)
+
+  DevicesManager.deleteDevice(0)
+  println("deleted")
+
+  DevicesManager.devices().foreach(dev =>{
+    print("dev: " + dev.name + "| stream: ")
+    dev.dataStreams.foreach(ds => print(ds.name + " "))
+    println()
+  })
+
+}
+
+object Test extends App {
+  case class Point(x: Int, y: Int)
+
+  var sensorStreams = TrieMap[Int, List[Point]]()
+
+  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,0))
+  sensorStreams += 1 -> (sensorStreams.getOrElse(1, List()) :+ Point(1,0))
+  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,1))
+  sensorStreams += 2 -> (sensorStreams.getOrElse(2, List()) :+ Point(2,0))
+  sensorStreams += 1 -> (sensorStreams.getOrElse(1, List()) :+ Point(1,1))
+  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,2))
+  sensorStreams.foreach(entry => println("entry: " + entry._1 + " elem: " + entry._2))
+
+}
