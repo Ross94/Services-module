@@ -217,38 +217,11 @@ object MonitorServiceTest extends App {
       complexDev = DevicesManager.createDevice("complex", "", Encodings.PDF, new URI(""), drv)
   }
 
-  DevicesManager.devices().foreach(dev =>{
-    print("dev: " + dev.name + "| stream: ")
-    dev.dataStreams.foreach(ds => print(ds.name + " "))
-    println()
-  })
-
   service.getStream().subscribe(e => println(e))
 
   Thread.sleep(10000)
 
   DevicesManager.deleteDevice(complexDev.id)
-  println("deleted")
-
-  DevicesManager.devices().foreach(dev =>{
-    print("dev: " + dev.name + "| stream: ")
-    dev.dataStreams.foreach(ds => print(ds.name + " "))
-    println()
-  })
-
-}
-
-object Test extends App {
-  case class Point(x: Int, y: Int)
-
-  var sensorStreams = TrieMap[Int, List[Point]]()
-
-  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,0))
-  sensorStreams += 1 -> (sensorStreams.getOrElse(1, List()) :+ Point(1,0))
-  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,1))
-  sensorStreams += 2 -> (sensorStreams.getOrElse(2, List()) :+ Point(2,0))
-  sensorStreams += 1 -> (sensorStreams.getOrElse(1, List()) :+ Point(1,1))
-  sensorStreams += 0 -> (sensorStreams.getOrElse(0, List()) :+ Point(0,2))
-  sensorStreams.foreach(entry => println("entry: " + entry._1 + " elem: " + entry._2))
+  println("deleted complexDevice")
 
 }
