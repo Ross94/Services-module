@@ -62,7 +62,6 @@ class MonitorService extends Service {
     }*/
   }
 
-  //private[this] val sensorStreams = TrieMap[Int, Disposable]()
   private[this] val sensorStreams = TrieMap[Int, List[Disposable]]()
   private[this] val jSonStream = PublishSubject.create[String]()
 
@@ -91,25 +90,6 @@ class MonitorService extends Service {
         sensorStreams(deviceDeleted.ds.id).foreach(_.dispose())
       case _ =>
     })
-    /*
-    EventBus.events.subscribe(_ match {
-      case deviceCreated: DeviceCreated =>
-        deviceCreated.ds.dataStreams.foreach(stream => {
-          sensorStreams.put(deviceCreated.ds.id,
-            stream.observable.map[String](elem => {
-              var jsonElem = JObject()
-              jsonElem ~= ("name" -> deviceCreated.ds.name)
-              jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
-              jsonElem ~= ("value" -> elem.result.toString.toDouble)
-              jsonElem ~= ("timestamp" -> elem.resultTime.toString)
-              jsonElem ~= ("level" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
-              compact(render(jsonElem))
-            }).subscribe(elem => jSonStream.onNext(elem))
-        })
-      case deviceDeleted: DeviceDeleted =>
-        sensorStreams(deviceDeleted.ds.id).dispose()
-      case _ =>
-    })*/
   }
 
   override def start(): Unit = webSocket.start()
@@ -117,7 +97,6 @@ class MonitorService extends Service {
   override def restart(): Unit = {}
 
   override def dispose(): Unit = {
-    //sensorStreams.foreach(stream => stream._2.dispose())
     sensorStreams.foreach(entry => entry._2.foreach(_.dispose()))
     webSocket.stop()
   }
@@ -195,7 +174,7 @@ object MonitorServiceTest extends App {
 
   ObjectExtractor.overrideClassLoader(DriversManager.cl)
 
-  val temperatureDriver = DriversManager.instanceDriver("simulatedTemperatureDriver")//da cambiare quando verrà rifatto il jar
+  val temperatureDriver = DriversManager.instanceDriver("simulatedTemperatureDriver")
   temperatureDriver.foreach {
     drv =>
       drv.controller.init()
@@ -229,17 +208,26 @@ object MonitorServiceTest extends App {
       DevicesManager.createDevice("sound", "", Encodings.PDF, new URI(""), drv)
   }
 
+  var complexDev: api.devices.Devices.Device = _
+  val complexDriver = DriversManager.instanceDriver("simulatedComplexDeviceDriver")
+  complexDriver.foreach {
+    drv =>
+      drv.controller.init()
+      drv.controller.start()
+      complexDev = DevicesManager.createDevice("complex", "", Encodings.PDF, new URI(""), drv)
+  }
+
   DevicesManager.devices().foreach(dev =>{
     print("dev: " + dev.name + "| stream: ")
     dev.dataStreams.foreach(ds => print(ds.name + " "))
     println()
   })
 
-  //service.getStream().subscribe(e => println(e))
+  service.getStream().subscribe(e => println(e))
 
   Thread.sleep(10000)
 
-  DevicesManager.deleteDevice(0)
+  DevicesManager.deleteDevice(complexDev.id)
   println("deleted")
 
   DevicesManager.devices().foreach(dev =>{
