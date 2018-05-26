@@ -58,14 +58,6 @@ class MonitorService extends Service {
           ctrl.send("ring-bell", "{\"duration\":"+alarmValue+",\"sleep\":750}")
       }
     }
-    //ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}").subscribe(e => println(e))
-    //DevicesManager.devices().
-    /*.foreach { drv =>
-      drv.controller match {
-        case ctrl: DeviceController with TaskingSupport =>
-          ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
-      }
-    }*/
   }
 
   private[this] val sensorStreams = TrieMap[Int, List[Disposable]]()
