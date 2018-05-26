@@ -52,6 +52,12 @@ class MonitorService extends Service {
   }
 
   def alarmTrigger(sensorType: String, alarmValue: Int): Unit = {
+    DevicesManager.devices().map(dev => dev.driver).find(_.metadata.name equals "simulatedBellDriver").foreach { drv =>
+      drv.controller match {
+        case ctrl: DeviceController with TaskingSupport =>
+          ctrl.send("ring-bell", "{\"duration\":"+alarmValue+",\"sleep\":750}")
+      }
+    }
     //ctrl.send("ring-bell", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}").subscribe(e => println(e))
     //DevicesManager.devices().
     /*.foreach { drv =>
@@ -168,60 +174,36 @@ object MonitorServiceTest extends App {
   //url: ws://localhost:7000/jsonStream
   //send: {"sender":1,"alarmType":"temp","level":2}
 
-  val service = new MonitorService()
+  private def createSensor(driverName: String, configFile: String = "", sensorName: String): api.devices.Devices.Device = {
+    val driver = DriversManager.instanceDriver(driverName)
+    var device: api.devices.Devices.Device = null
+    driver.foreach {
+      drv =>
+        drv.controller.init()
+        drv.controller.start()
+        if(!configFile.equals("")) drv.config.configure(configFile)
+        device = DevicesManager.createDevice(sensorName, "", Encodings.PDF, new URI(""), drv)
+    }
+    device
+  }
+
+  private val service = new MonitorService()
   service.init(ServiceMetadata("monitorServiceTest","0","test service",System.getProperty("user.dir")))
   service.start()
 
   ObjectExtractor.overrideClassLoader(DriversManager.cl)
 
-  val temperatureDriver = DriversManager.instanceDriver("simulatedTemperatureDriver")
-  temperatureDriver.foreach {
-    drv =>
-      drv.controller.init()
-      drv.controller.start()
-      drv.config.configure("temperature.conf")
-      DevicesManager.createDevice("temperature", "", Encodings.PDF, new URI(""), drv)
-  }
+  createSensor("simulatedTemperatureDriver", "temperature.conf", "temperature")
+  createSensor("simulatedHeartbeatDriver", "heartbeat.conf", "heartbeat")
+  createSensor(driverName = "simulatedBellDriver", sensorName = "bell")
+  createSensor(driverName = "simulatedSoundDriver", sensorName = "sound")
+  //private val complexDev: api.devices.Devices.Device = createSensor(driverName = "simulatedComplexDeviceDriver", sensorName = "complex")
 
-  val heartbeatDriver = DriversManager.instanceDriver("simulatedHeartbeatDriver")
-  heartbeatDriver.foreach {
-    drv =>
-      drv.controller.init()
-      drv.controller.start()
-      drv.config.configure("heartbeat.conf")
-      DevicesManager.createDevice("heartbeat", "", Encodings.PDF, new URI(""), drv)
-  }
+  //service.getStream().subscribe(e => println(e))
 
-  val bellDriver = DriversManager.instanceDriver("simulatedBellDriver")
-  bellDriver.foreach {
-    drv =>
-      drv.controller.init()
-      drv.controller.start()
-      DevicesManager.createDevice("bell", "", Encodings.PDF, new URI(""), drv)
-  }
+  Thread.sleep(5000)
 
-  val soundDriver = DriversManager.instanceDriver("simulatedSoundDriver")
-  soundDriver.foreach {
-    drv =>
-      drv.controller.init()
-      drv.controller.start()
-      DevicesManager.createDevice("sound", "", Encodings.PDF, new URI(""), drv)
-  }
-
-  var complexDev: api.devices.Devices.Device = _
-  val complexDriver = DriversManager.instanceDriver("simulatedComplexDeviceDriver")
-  complexDriver.foreach {
-    drv =>
-      drv.controller.init()
-      drv.controller.start()
-      complexDev = DevicesManager.createDevice("complex", "", Encodings.PDF, new URI(""), drv)
-  }
-
-  service.getStream().subscribe(e => println(e))
-
-  Thread.sleep(10000)
-
-  DevicesManager.deleteDevice(complexDev.id)
+  //DevicesManager.deleteDevice(complexDev.id)
   println("deleted complexDevice")
 
 }
