@@ -12,6 +12,7 @@ import io.javalin.embeddedserver.jetty.websocket.WebSocketHandler
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.PublishSubject
+import org.apache.log4j.BasicConfigurator
 import org.json4s.JsonDSL._
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -26,6 +27,8 @@ private case class Rule(sign: String, threshold: Double, alarm: Int)
 private case class AlarmData(alarmType: String, sender: Int, level: Int)
 
 class MonitorService extends Service {
+  //avoid log4j warning
+  BasicConfigurator.configure()
   implicit val _ = DefaultFormats
 
   private[this] var webSocket: MonitorServiceWebSocket = _
