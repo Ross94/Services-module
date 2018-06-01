@@ -8,11 +8,11 @@ import api.events.SensorsHubEvents.{DeviceCreated, DeviceDeleted}
 import api.internal.{DeviceController, TaskingSupport}
 import api.sensors.DevicesManager
 import com.fasterxml.jackson.core.JsonParseException
+import fi.oph.myscalaschema.extraction.ObjectExtractor
 import io.javalin.embeddedserver.jetty.websocket.WebSocketHandler
 import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.PublishSubject
-import org.apache.log4j.BasicConfigurator
 import org.json4s.JsonDSL._
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
@@ -27,8 +27,6 @@ private case class Rule(sign: String, threshold: Double, alarm: Int)
 private case class AlarmData(alarmType: String, sender: Int, level: Int)
 
 class MonitorService extends Service {
-  //avoid log4j warning
-  BasicConfigurator.configure()
   implicit val _ = DefaultFormats
 
   private[this] var webSocket: MonitorServiceWebSocket = _
@@ -58,7 +56,7 @@ class MonitorService extends Service {
     DevicesManager.devices().map(dev => dev.driver).find(_.metadata.name equals "simulatedBellDriver").foreach { drv =>
       drv.controller match {
         case ctrl: DeviceController with TaskingSupport =>
-          ctrl.send("ring-bell", "{\"duration\":"+alarmValue+",\"sleep\":750}")
+          ctrl.send("vibratePad", "{\"duration\":"+alarmValue+",\"sleep\":750}")
       }
     }
   }
@@ -88,7 +86,7 @@ class MonitorService extends Service {
             }).subscribe(elem => jSonStream.onNext(elem)))
         })
       case deviceDeleted: DeviceDeleted =>
-        sensorStreams(deviceDeleted.ds.id).foreach(_.dispose())
+        sensorStreams.remove(deviceDeleted.ds.id).foreach(_.foreach(_.dispose()))
       case _ =>
     })
   }
@@ -101,6 +99,8 @@ class MonitorService extends Service {
     sensorStreams.foreach(entry => entry._2.foreach(_.dispose()))
     webSocket.stop()
   }
+
+  override def stop(): Unit = { }
 }
 
 private class MonitorServiceWebSocket(
@@ -115,13 +115,6 @@ private class MonitorServiceWebSocket(
       //Remove jetty log
       System.setProperty("org.eclipse.jetty.util.log.class", "org.eclipse.jetty.util.log.StdErrLog")
       System.setProperty("org.eclipse.jetty.LEVEL", "OFF")
-
-      import org.apache.log4j.{Level, LogManager}
-      import scala.collection.JavaConverters._
-      LogManager.getCurrentLoggers.asScala foreach {
-        case l: org.apache.log4j.Logger =>
-          if(!l.getName.startsWith("sh.")) l.setLevel(Level.OFF)
-      }
   }
 
   private[this] val javalinWs = Javalin.create()
@@ -129,12 +122,12 @@ private class MonitorServiceWebSocket(
   javalinWs.ws("/jsonStream", (ws: WebSocketHandler) => {
     ws.onConnect(session => monitorService.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
       .subscribe(jsonElem => session.send(jsonElem)))
-    ws.onMessage((session, message) => {
+    ws.onMessage((_, message) => {
       def soundAlarm(duration: Int, sleep: Int): Unit = {
         DevicesManager.devices().map(dev => dev.driver).find(_.metadata.name equals "simulatedSoundDriver").foreach { drv =>
           drv.controller match {
             case ctrl: DeviceController with TaskingSupport =>
-              ctrl.send("play-sound", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
+              ctrl.send("ringAlarm", "{\"duration\":"+duration+",\"sleep\":"+sleep+"}")
           }
         }
       }
@@ -145,7 +138,6 @@ private class MonitorServiceWebSocket(
       }
       catch {
         case _: JsonParseException =>
-          //session.send("{\"error\":\"malformed json\"}")
       }
     })
   })
@@ -162,9 +154,9 @@ private object MonitorServiceWebSocket {
 
 object MonitorServiceTest extends App {
   import java.net.URI
+
   import api.internal.DriversManager
   import api.sensors.Sensors.Encodings
-  import fi.oph.myscalaschema.extraction.ObjectExtractor
 
   //url: ws://localhost:7000/jsonStream
   //send: {"sender":1,"alarmType":"temp","level":2}
@@ -199,6 +191,6 @@ object MonitorServiceTest extends App {
   Thread.sleep(5000)
 
   //DevicesManager.deleteDevice(complexDev.id)
-  println("deleted complexDevice")
+  //println("deleted complexDevice")
 
 }
