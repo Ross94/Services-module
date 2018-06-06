@@ -3,14 +3,11 @@ package main.root
 import java.util.concurrent.Executors
 
 import api.config.Preferences
-import api.events.EventBus
-import api.events.SensorsHubEvents.{DeviceCreated, DeviceDeleted}
 import api.internal.{DeviceController, TaskingSupport}
 import api.sensors.DevicesManager
 import com.fasterxml.jackson.core.JsonParseException
 import fi.oph.myscalaschema.extraction.ObjectExtractor
 import io.javalin.embeddedserver.jetty.websocket.WebSocketHandler
-import io.reactivex.disposables.Disposable
 import io.reactivex.schedulers.Schedulers
 import io.reactivex.subjects.PublishSubject
 import org.json4s.JsonDSL._
@@ -18,7 +15,6 @@ import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import spi.service.{Service, ServiceMetadata}
 
-import scala.collection.concurrent.TrieMap
 import scala.io.Source
 
 private case class Procedure(sensor: String, rules: List[Rule])
@@ -61,7 +57,6 @@ class MonitorService extends Service {
     }
   }
 
-  private[this] val sensorStreams = TrieMap[Int, List[Disposable]]()
   private[this] val jSonStream = PublishSubject.create[String]()
 
   def getStream(): PublishSubject[String] = jSonStream
@@ -71,23 +66,13 @@ class MonitorService extends Service {
     rules = (parse(Source.fromFile(metadata.rootDir + "/assets/config/thresholds.json").mkString) \ "allRules").extract[List[Procedure]]
     webSocket = MonitorServiceWebSocket(this, showLog = false, 7000)
 
-    EventBus.events.subscribe(_ match {
-      case deviceCreated: DeviceCreated =>
-        deviceCreated.ds.dataStreams.foreach(stream => {
-          sensorStreams += deviceCreated.ds.id -> (sensorStreams.getOrElse(deviceCreated.ds.id, List()) :+
-            stream.observable.map[String](elem => {
-              var jsonElem = JObject()
-              jsonElem ~= ("name" -> deviceCreated.ds.name)
-              jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
-              jsonElem ~= ("value" -> elem.result.toString.toDouble)
-              jsonElem ~= ("timestamp" -> elem.resultTime.toString)
-              jsonElem ~= ("level" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
-              compact(render(jsonElem))
-            }).subscribe(elem => jSonStream.onNext(elem)))
-        })
-      case deviceDeleted: DeviceDeleted =>
-        sensorStreams.remove(deviceDeleted.ds.id).foreach(_.foreach(_.dispose()))
-      case _ =>
+    DevicesManager.obsBus.subscribe(elem => {
+      var jsonElem = JObject()
+      jsonElem ~= ("type" -> elem.parentDataStream.observedProperty.name)
+      jsonElem ~= ("value" -> elem.result.toString.toDouble)
+      jsonElem ~= ("timestamp" -> elem.resultTime.toString)
+      jsonElem ~= ("level" -> valueChecker(elem.parentDataStream.observedProperty.name, elem.result))
+      jSonStream.onNext(compact(render(jsonElem)))
     })
   }
 
@@ -96,11 +81,12 @@ class MonitorService extends Service {
   override def restart(): Unit = {}
 
   override def dispose(): Unit = {
-    sensorStreams.foreach(entry => entry._2.foreach(_.dispose()))
     webSocket.stop()
   }
 
-  override def stop(): Unit = { }
+  override def stop(): Unit = {
+    webSocket.stop()
+  }
 }
 
 private class MonitorServiceWebSocket(
@@ -180,8 +166,8 @@ object MonitorServiceTest extends App {
 
   ObjectExtractor.overrideClassLoader(DriversManager.cl)
 
-  createSensor("simulatedTemperatureDriver", "temperature.conf", "temperature")
-  createSensor("simulatedHeartbeatDriver", "heartbeat.conf", "heartbeat")
+  createSensor("simulatedTemperatureDriver", "temperature.conf", "temp")
+  createSensor("simulatedHeartbeatDriver", "heartbeat.conf", "hb")
   createSensor(driverName = "simulatedBellDriver", sensorName = "bell")
   createSensor(driverName = "simulatedSoundDriver", sensorName = "sound")
   //private val complexDev: api.devices.Devices.Device = createSensor(driverName = "simulatedComplexDeviceDriver", sensorName = "complex")
