@@ -105,7 +105,7 @@ private class MonitorServiceWebSocket(
 
   private[this] val javalinWs = Javalin.create()
   javalinWs.port(port)
-  javalinWs.ws("/jsonStream", (ws: WebSocketHandler) => {
+  javalinWs.ws("/openMonitoringStream", (ws: WebSocketHandler) => {
     ws.onConnect(session => monitorService.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
       .subscribe(jsonElem => session.send(jsonElem)))
     ws.onMessage((_, message) => {
