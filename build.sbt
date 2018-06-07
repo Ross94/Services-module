@@ -1,4 +1,4 @@
-name := "Services-module"
+name := "TeamMonitorService"
 
 resolvers ++= Seq(
   Resolver.sonatypeRepo("releases"),

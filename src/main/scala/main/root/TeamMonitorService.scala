@@ -22,10 +22,10 @@ private case class Rule(sign: String, threshold: Double, alarm: Int)
 
 private case class AlarmData(alarmType: String, sender: Int, level: Int)
 
-class MonitorService extends Service {
+class TeamMonitorService extends Service {
   implicit val _ = DefaultFormats
 
-  private[this] var webSocket: MonitorServiceWebSocket = _
+  private[this] var webSocket: TeamMonitorServiceWebSocket = _
   private[this] var rules: List[Procedure] = _
 
   Preferences.configure("sh-prefs.conf")
@@ -64,7 +64,7 @@ class MonitorService extends Service {
   override def init(metadata: ServiceMetadata): Unit = {
 
     rules = (parse(Source.fromFile(metadata.rootDir + "/assets/config/thresholds.json").mkString) \ "allRules").extract[List[Procedure]]
-    webSocket = MonitorServiceWebSocket(this, showLog = false, 7000)
+    webSocket = TeamMonitorServiceWebSocket(this, showLog = false, 7000)
 
     DevicesManager.obsBus.subscribe(elem => {
       var jsonElem = JObject()
@@ -89,8 +89,8 @@ class MonitorService extends Service {
   }
 }
 
-private class MonitorServiceWebSocket(
-   private[this] val monitorService: MonitorService,
+private class TeamMonitorServiceWebSocket(
+   private[this] val teamMonitorService: TeamMonitorService,
    private[this] val showLog: Boolean = true,
    private[this] val port: Int = 8000) {
   import io.javalin.Javalin
@@ -106,7 +106,7 @@ private class MonitorServiceWebSocket(
   private[this] val javalinWs = Javalin.create()
   javalinWs.port(port)
   javalinWs.ws("/openMonitoringStream", (ws: WebSocketHandler) => {
-    ws.onConnect(session => monitorService.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
+    ws.onConnect(session => teamMonitorService.getStream().observeOn(Schedulers.from(Executors.newSingleThreadExecutor()))
       .subscribe(jsonElem => session.send(jsonElem)))
     ws.onMessage((_, message) => {
       def soundAlarm(duration: Int, sleep: Int): Unit = {
@@ -133,12 +133,12 @@ private class MonitorServiceWebSocket(
   def stop(): Unit = javalinWs.stop()
 }
 
-private object MonitorServiceWebSocket {
-  def apply(monitorService: MonitorService, showLog: Boolean = true, port: Int = 8000): MonitorServiceWebSocket =
-    new MonitorServiceWebSocket(monitorService, showLog, port)
+private object TeamMonitorServiceWebSocket {
+  def apply(monitorService: TeamMonitorService, showLog: Boolean = true, port: Int = 8000): TeamMonitorServiceWebSocket =
+    new TeamMonitorServiceWebSocket(monitorService, showLog, port)
 }
 
-object MonitorServiceTest extends App {
+object TeamMonitorServiceTest extends App {
   import java.net.URI
 
   import api.internal.DriversManager
@@ -160,7 +160,7 @@ object MonitorServiceTest extends App {
     device
   }
 
-  private val service = new MonitorService()
+  private val service = new TeamMonitorService()
   service.init(ServiceMetadata("monitorServiceTest","0","test service",System.getProperty("user.dir")))
   service.start()
 
